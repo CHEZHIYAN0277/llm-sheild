@@ -67,42 +67,79 @@ def chat(payload: PromptRequest) -> dict:
 
 def run_firewall(prompt: str) -> dict:
     """
-    Run the two-stage threat firewall on a prompt.
+    Run the two-stage threat firewall with adaptive defense.
 
-    1. Scan input → block if score > 80
-    2. Send to Ollama → scan output → block if score > 80
-    3. Return safe response
+    Actions based on threat_score:
+      0–30  → ALLOW      (process normally)
+      30–60 → WARN       (process + warning)
+      60–80 → REQUIRE_CONFIRMATION (hold, ask user to confirm)
+      80–100→ BLOCK      (reject immediately)
     """
     # Stage 1: Analyze input
     input_analysis = detector.analyze(prompt)
     input_score = input_analysis["threat_score"]
+    input_risk = calculate_risk(input_score)
+    input_action = input_risk["action"]
 
-    if input_score > 80:
+    # BLOCK — reject immediately
+    if input_action == "BLOCK":
         return {
             "blocked": True,
+            "action": "BLOCK",
             "stage": "input",
-            "reason": "High threat detected in user input",
+            "reason": input_analysis["reason"],
+            "matched_pattern": input_analysis["matched_pattern"],
             "threat_score": input_score,
         }
 
-    # Stage 2: Send safe prompt to Ollama
+    # REQUIRE_CONFIRMATION — hold for user approval
+    if input_action == "REQUIRE_CONFIRMATION":
+        return {
+            "blocked": False,
+            "action": "REQUIRE_CONFIRMATION",
+            "stage": "input",
+            "threat_score": input_score,
+            "reason": input_analysis["reason"],
+            "matched_pattern": input_analysis["matched_pattern"],
+            "message": "High risk detected. Confirm to proceed.",
+        }
+
+    # Stage 2: Send prompt to Ollama (ALLOW or WARN)
     llm_response = generate_response(prompt)
 
     # Stage 3: Analyze output
     output_analysis = detector.analyze(llm_response)
     output_score = output_analysis["threat_score"]
+    output_risk = calculate_risk(output_score)
+    output_action = output_risk["action"]
 
-    if output_score > 80:
+    # BLOCK output
+    if output_action == "BLOCK":
         return {
             "blocked": True,
+            "action": "BLOCK",
             "stage": "output",
-            "reason": "High threat detected in LLM response",
+            "reason": output_analysis["reason"],
+            "matched_pattern": output_analysis["matched_pattern"],
             "input_threat_score": input_score,
             "output_threat_score": output_score,
         }
 
+    # WARN — process but attach warning
+    if input_action == "WARN":
+        return {
+            "blocked": False,
+            "action": "WARN",
+            "message": "Suspicious content detected.",
+            "input_threat_score": input_score,
+            "output_threat_score": output_score,
+            "response": llm_response,
+        }
+
+    # ALLOW — clean pass-through
     return {
         "blocked": False,
+        "action": "ALLOW",
         "input_threat_score": input_score,
         "output_threat_score": output_score,
         "response": llm_response,
