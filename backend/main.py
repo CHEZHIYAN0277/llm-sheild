@@ -217,20 +217,21 @@ SIMULATION_PROMPTS = [
 @app.post("/simulate-attacks")
 def simulate_attacks() -> dict:
     """
-    Run a suite of test prompts through the chat firewall
-    and return aggregated results.
+    Run a suite of test prompts through the threat detector (no LLM call)
+    and return aggregated results instantly.
     """
     results = []
     for prompt in SIMULATION_PROMPTS:
-        firewall_result = run_firewall(prompt)
+        analysis = detector.analyze(prompt)
+        risk = calculate_risk(analysis["threat_score"])
+        blocked = risk["action"] == "BLOCK"
         results.append({
             "prompt": prompt,
-            "blocked": firewall_result["blocked"],
-            "stage": firewall_result.get("stage", "none"),
-            "threat_score": firewall_result.get(
-                "threat_score",
-                firewall_result.get("input_threat_score", 0),
-            ),
+            "blocked": blocked,
+            "action": risk["action"],
+            "threat_score": analysis["threat_score"],
+            "reason": analysis["reason"],
+            "matched_pattern": analysis.get("matched_pattern"),
         })
 
     return {
