@@ -5,26 +5,46 @@ Includes a protected chat firewall that scans both input and output.
 """
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from threat_detector import ThreatDetector
 from scoring_engine import calculate_risk
 from llm_handler import generate_response
+from document_scanner import init_model as init_scanner_model, scan_document
 
 app = FastAPI(
     title="LLM Shield",
     description="Detect and score threats in LLM prompts and responses.",
-    version="0.3.0",
+    version="0.4.0",
+)
+
+# Allow frontend to call backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Load detector once at startup
 detector = ThreatDetector()
 
 
-# --- Request model ---
+@app.on_event("startup")
+def startup_event():
+    """Load ML models at server startup."""
+    init_scanner_model()
+
+
+# --- Request models ---
 
 class PromptRequest(BaseModel):
     prompt: str
+
+
+class DocumentRequest(BaseModel):
+    text: str
 
 
 # --- Routes ---
@@ -61,6 +81,41 @@ def chat(payload: PromptRequest) -> dict:
     Expects JSON body: {"prompt": "..."}
     """
     return run_firewall(payload.prompt)
+
+
+@app.post("/chat-unprotected")
+def chat_unprotected(payload: PromptRequest) -> dict:
+    """
+    Unprotected chat endpoint — bypasses all firewall logic.
+    Used for 'Before vs After' demonstration of vulnerable LLM behavior.
+
+    Expects JSON body: {"prompt": "..."}
+    """
+    response = generate_response(payload.prompt)
+    is_error = response.startswith("[Error]")
+
+    if is_error:
+        return {
+            "protected": False,
+            "error": True,
+            "response": response,
+        }
+
+    return {
+        "protected": False,
+        "error": False,
+        "response": response,
+    }
+
+
+@app.post("/scan-document")
+def scan_document_endpoint(payload: DocumentRequest) -> dict:
+    """
+    Scan a document for poisoning / injected content (RAG defense).
+
+    Expects JSON body: {"text": "..."}
+    """
+    return scan_document(payload.text, detector)
 
 
 # --- Core firewall logic ---

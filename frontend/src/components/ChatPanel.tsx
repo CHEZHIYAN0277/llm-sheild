@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, ShieldAlert, ShieldCheck, Shield } from "lucide-react";
+import { Send, Bot, User, ShieldAlert, ShieldCheck, Shield, ShieldOff } from "lucide-react";
 import type { AnalysisResult } from "@/lib/types";
 import { getRiskColor, getRiskBadgeClasses } from "@/lib/types";
 
@@ -12,9 +12,10 @@ interface ChatMessage {
 interface ChatPanelProps {
   onAnalyze: (prompt: string) => Promise<AnalysisResult>;
   loading: boolean;
+  shieldEnabled?: boolean;
 }
 
-const ChatPanel = ({ onAnalyze, loading }: ChatPanelProps) => {
+const ChatPanel = ({ onAnalyze, loading, shieldEnabled = true }: ChatPanelProps) => {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -63,12 +64,23 @@ const ChatPanel = ({ onAnalyze, loading }: ChatPanelProps) => {
         {messages.length === 0 && !loading ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
-            <div className="h-16 w-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-              <Shield className="h-8 w-8 text-primary" />
+            <div className={`h-16 w-16 rounded-2xl border flex items-center justify-center ${shieldEnabled
+              ? "bg-primary/10 border-primary/20"
+              : "bg-critical/10 border-critical/20"
+              }`}>
+              {shieldEnabled ? (
+                <Shield className="h-8 w-8 text-primary" />
+              ) : (
+                <ShieldOff className="h-8 w-8 text-critical" />
+              )}
             </div>
-            <h2 className="text-xl font-semibold text-foreground">LLM Shield Chat</h2>
+            <h2 className="text-xl font-semibold text-foreground">
+              {shieldEnabled ? "LLM Shield Chat" : "Unprotected Chat"}
+            </h2>
             <p className="text-sm text-muted-foreground text-center max-w-md">
-              Send a prompt to test the AI firewall. Every message is scanned for injection attacks, data leakage, and adversarial manipulation in real time.
+              {shieldEnabled
+                ? "Send a prompt to test the AI firewall. Every message is scanned for injection attacks, data leakage, and adversarial manipulation in real time."
+                : "Firewall is disabled. Prompts are sent directly to the LLM without any protection. Use this to demonstrate vulnerable behavior."}
             </p>
             <div className="flex flex-wrap gap-2 mt-2 max-w-lg justify-center">
               {[
@@ -105,13 +117,24 @@ const ChatPanel = ({ onAnalyze, loading }: ChatPanelProps) => {
                 ) : (
                   /* Bot response */
                   <div className="flex gap-3 py-4 rounded-xl">
-                    <div className="shrink-0 h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
-                      <Bot className="h-4 w-4 text-primary" />
+                    <div className={`shrink-0 h-8 w-8 rounded-full border flex items-center justify-center ${!shieldEnabled ? "bg-orange-400/10 border-orange-400/20" : "bg-primary/10 border-primary/20"
+                      }`}>
+                      <Bot className={`h-4 w-4 ${!shieldEnabled ? "text-orange-400" : "text-primary"}`} />
                     </div>
                     <div className="flex-1 pt-1 space-y-2.5">
-                      <p className="text-sm font-medium text-foreground/60 mb-1">LLM Shield</p>
+                      <p className="text-sm font-medium text-foreground/60 mb-1">
+                        {shieldEnabled ? "LLM Shield" : "LLM (Unprotected)"}
+                      </p>
 
-                      {msg.result?.blocked ? (
+                      {!shieldEnabled ? (
+                        /* Unprotected mode — raw response, no analysis */
+                        <div className="text-sm text-foreground leading-relaxed">
+                          <div className="flex items-center gap-1.5 text-orange-400 text-xs font-medium mb-2">
+                            <ShieldOff className="h-3.5 w-3.5" /> No Protection
+                          </div>
+                          {msg.content}
+                        </div>
+                      ) : msg.result?.blocked ? (
                         <div className="rounded-xl bg-critical/5 border border-critical/20 px-4 py-3">
                           <div className="flex items-center gap-2 text-critical text-sm font-semibold mb-1.5">
                             <ShieldAlert className="h-4 w-4" /> BLOCKED
@@ -149,8 +172,8 @@ const ChatPanel = ({ onAnalyze, loading }: ChatPanelProps) => {
                         </div>
                       )}
 
-                      {/* Threat score badge */}
-                      {msg.result && (
+                      {/* Threat score badge — only in protected mode */}
+                      {shieldEnabled && msg.result && (
                         <div className="flex items-center gap-2.5 pt-1">
                           <span className={`text-base font-bold font-mono ${getRiskColor(msg.result.threatScore)}`}>
                             {msg.result.threatScore}

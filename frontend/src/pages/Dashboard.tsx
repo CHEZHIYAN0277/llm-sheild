@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, ArrowLeft, BarChart3, X } from "lucide-react";
+import { Shield, ShieldOff, ArrowLeft, BarChart3, X, FileText } from "lucide-react";
 import ChatPanel from "@/components/ChatPanel";
 import ThreatMonitor from "@/components/ThreatMonitor";
 import ThreatGauge from "@/components/ThreatGauge";
@@ -15,6 +15,7 @@ const Index = () => {
   const [latestScore, setLatestScore] = useState(0);
   const [loading, setLoading] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [shieldEnabled, setShieldEnabled] = useState(true);
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalRequests: 0,
     blockedAttempts: 0,
@@ -25,14 +26,34 @@ const Index = () => {
   const handleAnalyze = useCallback(async (prompt: string): Promise<AnalysisResult> => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
+      const endpoint = shieldEnabled ? "/chat" : "/chat-unprotected";
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
       const data = await res.json();
 
-      // Map backend snake_case response to frontend camelCase
+      if (!shieldEnabled) {
+        // Unprotected mode — no threat analysis, just raw LLM response
+        const result: AnalysisResult = {
+          prompt,
+          threatScore: 0,
+          riskLevel: "SAFE",
+          blocked: false,
+          response: data.response,
+          action: "ALLOW",
+        };
+        setLatestScore(0);
+        setMetrics((prev) => ({
+          ...prev,
+          totalRequests: prev.totalRequests + 1,
+          safePrompts: prev.safePrompts + 1,
+        }));
+        return result;
+      }
+
+      // Protected mode — full threat analysis
       const threatScore = data.threat_score ?? data.input_threat_score ?? 0;
       const blocked = data.blocked ?? false;
       const action = data.action ?? (blocked ? "BLOCK" : "ALLOW");
@@ -58,7 +79,6 @@ const Index = () => {
       }));
       return result;
     } catch (err) {
-      // If backend is unreachable, return error result
       const errorResult: AnalysisResult = {
         prompt,
         threatScore: 0,
@@ -72,7 +92,7 @@ const Index = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [shieldEnabled]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -88,17 +108,60 @@ const Index = () => {
               <span className="text-base font-semibold tracking-tight text-foreground">LLM Shield</span>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2 text-muted-foreground hover:text-foreground"
-            onClick={() => setShowStats(!showStats)}
-          >
-            <BarChart3 className="h-4 w-4" />
-            {showStats ? "Hide Stats" : "Show Stats"}
-          </Button>
+
+          <div className="flex items-center gap-2">
+            {/* Shield Toggle */}
+            <button
+              onClick={() => setShieldEnabled(!shieldEnabled)}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-all border ${shieldEnabled
+                ? "bg-success/10 border-success/30 text-success hover:bg-success/20"
+                : "bg-critical/10 border-critical/30 text-critical hover:bg-critical/20"
+                }`}
+            >
+              {shieldEnabled ? (
+                <>
+                  <Shield className="h-3.5 w-3.5" />
+                  Shield ON
+                </>
+              ) : (
+                <>
+                  <ShieldOff className="h-3.5 w-3.5" />
+                  Shield OFF
+                </>
+              )}
+            </button>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground hover:text-foreground"
+              onClick={() => navigate("/scanner")}
+            >
+              <FileText className="h-4 w-4" />
+              Scanner
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowStats(!showStats)}
+            >
+              <BarChart3 className="h-4 w-4" />
+              {showStats ? "Hide Stats" : "Show Stats"}
+            </Button>
+          </div>
         </div>
       </nav>
+
+      {/* Shield OFF warning banner */}
+      {!shieldEnabled && (
+        <div className="bg-critical/10 border-b border-critical/20 px-5 py-2 text-center">
+          <p className="text-xs font-semibold text-critical">
+            ⚠️ FIREWALL DISABLED — Prompts are sent directly to the LLM without protection
+          </p>
+        </div>
+      )}
 
       {/* Stats overlay — Glacier glass panel */}
       {showStats && (
@@ -143,7 +206,7 @@ const Index = () => {
 
       {/* Chat — fills remaining space */}
       <div className="flex-1 flex flex-col min-h-0">
-        <ChatPanel onAnalyze={handleAnalyze} loading={loading} />
+        <ChatPanel onAnalyze={handleAnalyze} loading={loading} shieldEnabled={shieldEnabled} />
       </div>
     </div>
   );
